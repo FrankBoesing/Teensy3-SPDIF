@@ -77,6 +77,8 @@ uint16_t bmclookup[256] = { //biphase mark encoded values for 0x00..0xff
 
 void AudioOutputSPDIF::begin(void)
 {
+	//perhaps it is faster to use 32-bit output ? -> less dma transfers on the bus
+	
 	dma.begin(true); // Allocate the DMA channel first
 
 	block_left_1st = NULL;
@@ -120,10 +122,11 @@ void AudioOutputSPDIF::encode(int16_t *dest, uint16_t lc, uint16_t rc)
 //2. the buffer is filled with an offset of 1 byte, so the last parity (which is always 0 now (see 1.) ) is written as first byte
 // -> a bit easier and faster to construct the subframes
 
+//3. dest4 ist constant (dest+0 partly), perhaps it does not need to be written every time...
 
 
 	static uint16_t frame = 0;
-	uint16_t lo, hi, aux; // bitmap of biphase mark code
+	uint16_t lo, hi, aux;
 
 	//Left Channel Subframe:
 	hi  = bmclookup[(uint8_t)(lc >> 8)];
