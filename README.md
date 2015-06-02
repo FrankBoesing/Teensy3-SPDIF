@@ -8,7 +8,8 @@ Warning: This is ALPHA - testing only!
 - There may be myriads of bugs .
 - Needs optimizing.
 
+Optical output ("TOSLINK")
+http://www.hardwarebook.info/S/PDIF_optical
 
-Simplest hardware is a bright red LED on I2S-TX as "TOSLINK".
-Much better are TOSLINK jacks.
-
+S/PDIF output buffer circuits:
+http://www.hardwarebook.info/S/PDIF_output
