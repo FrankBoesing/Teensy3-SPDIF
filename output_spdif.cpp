@@ -287,33 +287,20 @@ void AudioOutputSPDIF::update(void)
 }
 
 
-//
-// We need 44100 * 64 * 2
+// We need 441117.647 * 64 Hz
 #if F_CPU == 96000000 || F_CPU == 48000000 || F_CPU == 24000000
   // PLL is at 96 MHz in these modes
-
- // #define MCLK_MULT 1
- // #define MCLK_DIV  16
-
-  //Is this correct ???
-  
-  #define MCLK_MULT 146
-  #define MCLK_DIV 624
-
-/*
+  #define MCLK_MULT 1 
+  #define MCLK_DIV 17
 #elif F_CPU == 72000000
-  #define MCLK_MULT 8
-  #define MCLK_DIV  51
-#elif F_CPU == 120000000
-  #define MCLK_MULT 8
-  #define MCLK_DIV  85
-#elif F_CPU == 144000000
   #define MCLK_MULT 4
   #define MCLK_DIV  51
-#elif F_CPU == 168000000
-  #define MCLK_MULT 8
-  #define MCLK_DIV  119
-*/
+#elif F_CPU == 120000000
+  #define MCLK_MULT 4
+  #define MCLK_DIV  85
+#elif F_CPU == 144000000
+  #define MCLK_MULT 2
+  #define MCLK_DIV  51
 #else
   #error "This CPU Clock Speed is not supported by the Audio library";
 #endif
@@ -333,22 +320,23 @@ void AudioOutputSPDIF::config_SPDIF(void)
 
 	// enable MCLK output
 	I2S0_MCR = I2S_MCR_MICS(MCLK_SRC) | I2S_MCR_MOE;
-	//I2S0_MDR = I2S_MDR_FRACT((MCLK_MULT-1)) | I2S_MDR_DIVIDE((MCLK_DIV-1));
-	I2S0_MDR = I2S_MDR_FRACT((MCLK_MULT)) | I2S_MDR_DIVIDE((MCLK_DIV));
+	I2S0_MDR = I2S_MDR_FRACT((MCLK_MULT-1)) | I2S_MDR_DIVIDE((MCLK_DIV-1));
 
 	// configure transmitter
 	I2S0_TMR = 0;
 	I2S0_TCR1 = I2S_TCR1_TFW(1);  // watermark at half fifo size
-	I2S0_TCR2 = I2S_TCR2_SYNC(0) | I2S_TCR2_BCP | I2S_TCR2_MSEL(1)
-		| I2S_TCR2_BCD | I2S_TCR2_DIV(3);
+	//I2S0_TCR2 = I2S_TCR2_SYNC(0) | I2S_TCR2_BCP | I2S_TCR2_MSEL(1) | I2S_TCR2_BCD | I2S_TCR2_DIV(3); //orig i2s
+	I2S0_TCR2 = I2S_TCR2_SYNC(0) | I2S_TCR2_BCP | I2S_TCR2_MSEL(1) | I2S_TCR2_BCD | I2S_TCR2_DIV(0);
 	I2S0_TCR3 = I2S_TCR3_TCE;
 
-	//8 "Words" per Frame 8 Bit "Word" Length, MSB First:
+	//8 "Words" per Frame 16 Bit "Word" Length, MSB First:
 	I2S0_TCR4 = I2S_TCR4_FRSZ(3) | I2S_TCR4_SYWD(1) | I2S_TCR4_MF | I2S_TCR4_FSP | I2S_TCR4_FSD;
 	I2S0_TCR5 = I2S_TCR5_WNW(15) | I2S_TCR5_W0W(15) | I2S_TCR5_FBT(15);
 
+#if 0	
 	// configure pin mux for 3 clock signals
 	CORE_PIN23_CONFIG = PORT_PCR_MUX(6); // pin 23, PTC2, I2S0_TX_FS (LRCLK)
 	CORE_PIN9_CONFIG  = PORT_PCR_MUX(6); // pin  9, PTC3, I2S0_TX_BCLK
 	CORE_PIN11_CONFIG = PORT_PCR_MUX(6); // pin 11, PTC6, I2S0_MCLK
+#endif	
 }
