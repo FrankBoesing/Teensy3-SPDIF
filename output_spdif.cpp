@@ -108,13 +108,7 @@ void AudioOutputSPDIF::begin(void)
 
 }
 
-
-void AudioOutputSPDIF::encode(int16_t *dest, uint16_t lc, uint16_t rc)
-{
-	//TODO: OPTIMIZE THIS ! 32-Bit writes ?
-
-//void encode(destination, right channel, left channel) creates a frame.
-
+//encodeL/encodeR:
 //1. to make it easier and a bit faster, the parity-bit is always the same.
 // - with a alternating parity we had to adjust the next subframe
 // instead, use a bit from the aux-info as parity.
@@ -122,52 +116,52 @@ void AudioOutputSPDIF::encode(int16_t *dest, uint16_t lc, uint16_t rc)
 //2. the buffer is filled with an offset of 1 byte, so the last parity (which is always 0 now (see 1.) ) is written as first byte
 // -> a bit easier and faster to construct the subframes
 
-//3. dest4 ist constant (dest+0 partly), perhaps it does not need to be written every time...
 
-
-	static uint16_t frame = 0;
+void AudioOutputSPDIF::encodeL(int32_t *dest, uint16_t lc)
+{
+static uint16_t frame = 0;
 	uint16_t lo, hi, aux;
 
 	//Left Channel Subframe:
 	hi  = bmclookup[(uint8_t)(lc >> 8)];
 	lo  = bmclookup[(uint8_t) lc];
 	lo ^= (~((int16_t)hi) >> 16);
+	
+	*(dest+1) = ((uint32_t)hi << 16) | lo;
+	
 	aux = (0xB333 ^ (((uint32_t)((int16_t)lo)) >> 17));
-
 	if ( frame == 0 ) {
-		*( dest + 0) = 0xcc00 | PREAMBLE_B;
+		*dest = ((uint32_t)aux << 16) | 0xcc00 | PREAMBLE_B;
 	} else {
-		*( dest + 0) = 0xcc00 | PREAMBLE_M;
+		*dest = ((uint32_t)aux << 16) | 0xcc00 | PREAMBLE_M;
 	}
-	*( dest + 1)  = aux;
-	*( dest + 2)  = lo;
-	*( dest + 3)  = hi;
+		
+	frame++;
+	if (frame > 191) frame = 0;	
+}
 
-	//Right Channel Subframe:
+inline
+void AudioOutputSPDIF::encodeR(int32_t *dest, uint16_t rc)
+{
+
+uint16_t lo, hi, aux;
+
 	hi  = bmclookup[(uint8_t)(rc >> 8)];
 	lo  = bmclookup[(uint8_t)rc];
 	lo ^= (~((int16_t)hi) >> 16);
+	*(dest+1) = ((uint32_t)hi << 16) | lo;
+	
 	aux = (0xB333 ^ (((uint32_t)((int16_t)lo)) >> 17));
-
-	*( dest + 4)  = (0xcc00 | PREAMBLE_W);
-	*( dest + 5)  = aux;
-	*( dest + 6)  = lo;
-	*( dest + 7)  = hi;
-
-	frame++;
-	if (frame > 191) frame = 0;
-
+    *dest  = (0xcc << 24) | (PREAMBLE_W << 16) | aux;	
 }
-#if test
-void AudioOutputSPDIF::isr(void) {} //empty
-#else
+
+
 void AudioOutputSPDIF::isr(void)
 {
 
-	const int16_t *src, *end;
-	int16_t *dest;
+	const int16_t *src;
+	int32_t *end, *dest;	
 	audio_block_t *block;
-
 	uint32_t saddr, offset;
 
 	saddr = (uint32_t)(dma.TCD->SADDR);
@@ -175,26 +169,27 @@ void AudioOutputSPDIF::isr(void)
 	if (saddr < (uint32_t)SPDIF_tx_buffer + sizeof(SPDIF_tx_buffer) / 2) {
 		// DMA is transmitting the first half of the buffer
 		// so we must fill the second half
-		dest = (int16_t *)&SPDIF_tx_buffer[AUDIO_BLOCK_SAMPLES*8/2];
-		end = (int16_t *)&SPDIF_tx_buffer[AUDIO_BLOCK_SAMPLES*8];
+		dest = (int32_t *)&SPDIF_tx_buffer[AUDIO_BLOCK_SAMPLES*8/2];
+		end = (int32_t *)&SPDIF_tx_buffer[AUDIO_BLOCK_SAMPLES*8];
 		if (AudioOutputSPDIF::update_responsibility) AudioStream::update_all();
 	} else {
 		// DMA is transmitting the second half of the buffer
 		// so we must fill the first half
-		dest = (int16_t *)SPDIF_tx_buffer;
-		end = (int16_t *)&SPDIF_tx_buffer[AUDIO_BLOCK_SAMPLES*8/2];
+		dest = (int32_t *)SPDIF_tx_buffer;
+		end = (int32_t *)&SPDIF_tx_buffer[AUDIO_BLOCK_SAMPLES*8/2];
 	}
+	
 
 	// TODO: Currently left channel only!!!!!!!
+	//Serial.printf("Left:%X\r\n", dest);
 	block = AudioOutputSPDIF::block_left_1st;
 	if (block) {
 		offset = AudioOutputSPDIF::block_left_offset;
 		src = &block->data[offset];
 		do {
-			//*dest = *src++;
-			encode(dest, *src, *src);
+			encodeL(dest, *src);
 			src++;
-			dest += 8;
+			dest += 4;
 		} while (dest < end);
 		offset += AUDIO_BLOCK_SAMPLES/2;
 		if (offset < AUDIO_BLOCK_SAMPLES) {
@@ -205,28 +200,26 @@ void AudioOutputSPDIF::isr(void)
 			AudioOutputSPDIF::block_left_1st = AudioOutputSPDIF::block_left_2nd;
 			AudioOutputSPDIF::block_left_2nd = NULL;
 		}
-	} else {
-		//TODO!!!!
+	} else {		
 		do {
-			encode(dest, 0, 0);
-			src++;
-			dest += 8;
+			encodeL(dest, 0);
+			dest +=4;
 		} while (dest < end);
 	}
 
 
-	//TODO!!!!!!!!!!!!!!
-	dest -= AUDIO_BLOCK_SAMPLES - 1;
+	dest -= AUDIO_BLOCK_SAMPLES * 2 - 2;
 	block = AudioOutputSPDIF::block_right_1st;
 	if (block) {
 		offset = AudioOutputSPDIF::block_right_offset;
 		src = &block->data[offset];
-		/*
+		
 		do {
-			*dest = *src++;
-			dest += 2;
+			encodeR(dest, *src);
+			src++;
+			dest += 4;
 		} while (dest < end);
-		*/
+		
 		offset += AUDIO_BLOCK_SAMPLES/2;
 		if (offset < AUDIO_BLOCK_SAMPLES) {
 			AudioOutputSPDIF::block_right_offset = offset;
@@ -237,16 +230,15 @@ void AudioOutputSPDIF::isr(void)
 			AudioOutputSPDIF::block_right_2nd = NULL;
 		}
 	} else {
-		/*
 		do {
-			*dest = 0;
-			dest += 2;
+			//encodeR(dest, 0);
+			*dest 	= 0xcce4ccccUL;
+			*(dest+1) = 0xccccccccUL;				
+			dest += 4;
 		} while (dest < end);
-		*/
 	}
 
 }
-#endif
 
 void AudioOutputSPDIF::update(void)
 {
@@ -300,10 +292,11 @@ void AudioOutputSPDIF::update(void)
 #if F_CPU == 96000000 || F_CPU == 48000000 || F_CPU == 24000000
   // PLL is at 96 MHz in these modes
 
-  //#define MCLK_MULT 2
-  //#define MCLK_DIV 17
+ // #define MCLK_MULT 1
+ // #define MCLK_DIV  16
 
   //Is this correct ???
+  
   #define MCLK_MULT 146
   #define MCLK_DIV 624
 

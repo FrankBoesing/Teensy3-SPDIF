@@ -43,7 +43,8 @@ protected:
 	static DMAChannel dma;
 	static void isr(void);
 private:
-	static void encode(int16_t *dest, uint16_t lc, uint16_t rc);
+	static void encodeL(int32_t *dest, uint16_t lc);
+	static void encodeR(int32_t *dest, uint16_t rc);
 	static audio_block_t *block_left_2nd;
 	static audio_block_t *block_right_2nd;
 	static uint16_t block_left_offset;
