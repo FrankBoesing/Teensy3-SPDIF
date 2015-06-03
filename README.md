@@ -1,11 +1,9 @@
 # Teensy3-SPDIF
 SPDIF-Output for Teensy3.x Audio-Library
 
-Warning: This is ALPHA - testing only!
+This is BETA - testing only!
 
-
-- 96 MHz only (this needs to be extended).
-- There may be myriads of bugs .
+- There may be some bugs.
 - Needs optimizing.
 
 Optical output ("TOSLINK")
