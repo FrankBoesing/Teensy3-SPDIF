@@ -22,7 +22,7 @@
  */
 
 #include "output_SPDIF.h"
-
+#include <arm_math.h>
 audio_block_t * AudioOutputSPDIF::block_left_1st = NULL;
 audio_block_t * AudioOutputSPDIF::block_right_1st = NULL;
 audio_block_t * AudioOutputSPDIF::block_left_2nd = NULL;
@@ -31,7 +31,7 @@ uint16_t  AudioOutputSPDIF::block_left_offset = 0;
 uint16_t  AudioOutputSPDIF::block_right_offset = 0;
 bool AudioOutputSPDIF::update_responsibility = false;
 
-DMAMEM static uint16_t SPDIF_tx_buffer[AUDIO_BLOCK_SAMPLES * 8]; //2 KB
+DMAMEM static uint32_t SPDIF_tx_buffer[AUDIO_BLOCK_SAMPLES * 4]; //2 KB
 
 DMAChannel AudioOutputSPDIF::dma(false);
 
@@ -89,15 +89,15 @@ void AudioOutputSPDIF::begin(void)
 	CORE_PIN22_CONFIG = PORT_PCR_MUX(6); // pin 22, PTC1, I2S0_TXD0
 
 	dma.TCD->SADDR = SPDIF_tx_buffer;
-	dma.TCD->SOFF = 2;
-	dma.TCD->ATTR = DMA_TCD_ATTR_SSIZE(1) | DMA_TCD_ATTR_DSIZE(1);
-	dma.TCD->NBYTES_MLNO = 2;
+	dma.TCD->SOFF = 4;
+	dma.TCD->ATTR = DMA_TCD_ATTR_SSIZE(2) | DMA_TCD_ATTR_DSIZE(2);
+	dma.TCD->NBYTES_MLNO = 4*4;
 	dma.TCD->SLAST = -sizeof(SPDIF_tx_buffer);
 	dma.TCD->DADDR = &I2S0_TDR0;
 	dma.TCD->DOFF = 0;
-	dma.TCD->CITER_ELINKNO = sizeof(SPDIF_tx_buffer) / 2;
+	dma.TCD->CITER_ELINKNO = sizeof(SPDIF_tx_buffer) / dma.TCD->NBYTES_MLNO;
 	dma.TCD->DLASTSGA = 0;
-	dma.TCD->BITER_ELINKNO = sizeof(SPDIF_tx_buffer) / 2;
+	dma.TCD->BITER_ELINKNO = sizeof(SPDIF_tx_buffer) / dma.TCD->NBYTES_MLNO;
 	dma.TCD->CSR = DMA_TCD_CSR_INTHALF | DMA_TCD_CSR_INTMAJOR;
 	dma.triggerAtHardwareEvent(DMAMUX_SOURCE_I2S0_TX);
 	update_responsibility = update_setup();
@@ -123,19 +123,20 @@ static uint16_t frame = 0;
 	uint16_t lo, hi, aux;
 
 	//Left Channel Subframe:
+	//lc = 0;
 	hi  = bmclookup[(uint8_t)(lc >> 8)];
 	lo  = bmclookup[(uint8_t) lc];
 	lo ^= (~((int16_t)hi) >> 16);
 	
-	*(dest+1) = ((uint32_t)hi << 16) | lo;
+	*(dest+1) = ((uint32_t)lo << 16) | hi;
 	
 	aux = (0xB333 ^ (((uint32_t)((int16_t)lo)) >> 17));
 	if ( frame == 0 ) {
-		*dest = ((uint32_t)aux << 16) | 0xcc00 | PREAMBLE_B;
+		*(dest+0) = 0xcc000000 | (PREAMBLE_B << 16 ) | aux;
 	} else {
-		*dest = ((uint32_t)aux << 16) | 0xcc00 | PREAMBLE_M;
+		*(dest+0) = 0xcc000000 | (PREAMBLE_M << 16 ) | aux;
 	}
-		
+	
 	frame++;
 	if (frame > 191) frame = 0;	
 }
@@ -143,16 +144,14 @@ static uint16_t frame = 0;
 inline
 void AudioOutputSPDIF::encodeR(int32_t *dest, uint16_t rc)
 {
-
-uint16_t lo, hi, aux;
-
+	uint16_t lo, hi, aux;
 	hi  = bmclookup[(uint8_t)(rc >> 8)];
 	lo  = bmclookup[(uint8_t)rc];
 	lo ^= (~((int16_t)hi) >> 16);
-	*(dest+1) = ((uint32_t)hi << 16) | lo;
+	*(dest+1) = ( ((uint32_t)lo << 16) | hi );
 	
 	aux = (0xB333 ^ (((uint32_t)((int16_t)lo)) >> 17));
-    *dest  = (0xcc << 24) | (PREAMBLE_W << 16) | aux;	
+    *(dest+0)  =  0xcc000000 | (PREAMBLE_W << 16 ) | aux;		
 }
 
 
@@ -169,26 +168,23 @@ void AudioOutputSPDIF::isr(void)
 	if (saddr < (uint32_t)SPDIF_tx_buffer + sizeof(SPDIF_tx_buffer) / 2) {
 		// DMA is transmitting the first half of the buffer
 		// so we must fill the second half
-		dest = (int32_t *)&SPDIF_tx_buffer[AUDIO_BLOCK_SAMPLES*8/2];
-		end = (int32_t *)&SPDIF_tx_buffer[AUDIO_BLOCK_SAMPLES*8];
+		dest = (int32_t *)&SPDIF_tx_buffer[AUDIO_BLOCK_SAMPLES * 4/2];
+		end = (int32_t *)&SPDIF_tx_buffer[AUDIO_BLOCK_SAMPLES * 4];
 		if (AudioOutputSPDIF::update_responsibility) AudioStream::update_all();
 	} else {
 		// DMA is transmitting the second half of the buffer
 		// so we must fill the first half
 		dest = (int32_t *)SPDIF_tx_buffer;
-		end = (int32_t *)&SPDIF_tx_buffer[AUDIO_BLOCK_SAMPLES*8/2];
+		end = (int32_t *)&SPDIF_tx_buffer[AUDIO_BLOCK_SAMPLES * 4/2];
 	}
 	
 
-	// TODO: Currently left channel only!!!!!!!
-	//Serial.printf("Left:%X\r\n", dest);
 	block = AudioOutputSPDIF::block_left_1st;
 	if (block) {
 		offset = AudioOutputSPDIF::block_left_offset;
 		src = &block->data[offset];
 		do {
-			encodeL(dest, *src);
-			src++;
+			encodeL(dest, *src++);
 			dest += 4;
 		} while (dest < end);
 		offset += AUDIO_BLOCK_SAMPLES/2;
@@ -208,15 +204,14 @@ void AudioOutputSPDIF::isr(void)
 	}
 
 
-	dest -= AUDIO_BLOCK_SAMPLES * 2 - 2;
+	dest -= AUDIO_BLOCK_SAMPLES * 4/2 - 4/2;
 	block = AudioOutputSPDIF::block_right_1st;
 	if (block) {
 		offset = AudioOutputSPDIF::block_right_offset;
 		src = &block->data[offset];
 		
 		do {
-			encodeR(dest, *src);
-			src++;
+			encodeR(dest, *src++);
 			dest += 4;
 		} while (dest < end);
 		
@@ -231,10 +226,10 @@ void AudioOutputSPDIF::isr(void)
 		}
 	} else {
 		do {
-			//encodeR(dest, 0);
-			*dest 	= 0xcce4ccccUL;
-			*(dest+1) = 0xccccccccUL;				
-			dest += 4;
+			encodeR(dest, 0);
+			//*dest 	= 0xcce4ccccUL;
+			//*(dest+1) = 0xccccccccUL;				
+			dest += 4 ;
 		} while (dest < end);
 	}
 
@@ -287,20 +282,26 @@ void AudioOutputSPDIF::update(void)
 }
 
 
-// We need 441117.647 * 64 Hz
+// We need 441117.647 * 64 (*2?) Hz
 #if F_CPU == 96000000 || F_CPU == 48000000 || F_CPU == 24000000
   // PLL is at 96 MHz in these modes
-  #define MCLK_MULT 1 
-  #define MCLK_DIV 17
+  #define MCLK_MULT 2
+  #define MCLK_DIV  17
 #elif F_CPU == 72000000
-  #define MCLK_MULT 4
+  #define MCLK_MULT 8
   #define MCLK_DIV  51
 #elif F_CPU == 120000000
-  #define MCLK_MULT 4
+  #define MCLK_MULT 8
   #define MCLK_DIV  85
 #elif F_CPU == 144000000
-  #define MCLK_MULT 2
+  #define MCLK_MULT 4
   #define MCLK_DIV  51
+#elif F_CPU == 168000000
+  #define MCLK_MULT 8
+  #define MCLK_DIV  119
+#elif F_CPU == 16000000
+  #define MCLK_MULT 12
+  #define MCLK_DIV  17
 #else
   #error "This CPU Clock Speed is not supported by the Audio library";
 #endif
@@ -317,26 +318,29 @@ void AudioOutputSPDIF::config_SPDIF(void)
 	SIM_SCGC6 |= SIM_SCGC6_I2S;
 	SIM_SCGC7 |= SIM_SCGC7_DMA;
 	SIM_SCGC6 |= SIM_SCGC6_DMAMUX;
-
+	
 	// enable MCLK output
 	I2S0_MCR = I2S_MCR_MICS(MCLK_SRC) | I2S_MCR_MOE;
 	I2S0_MDR = I2S_MDR_FRACT((MCLK_MULT-1)) | I2S_MDR_DIVIDE((MCLK_DIV-1));
 
 	// configure transmitter
 	I2S0_TMR = 0;
-	I2S0_TCR1 = I2S_TCR1_TFW(1);  // watermark at half fifo size
+	I2S0_TCR1 = I2S_TCR1_TFW(1);  // watermark 
 	//I2S0_TCR2 = I2S_TCR2_SYNC(0) | I2S_TCR2_BCP | I2S_TCR2_MSEL(1) | I2S_TCR2_BCD | I2S_TCR2_DIV(3); //orig i2s
-	I2S0_TCR2 = I2S_TCR2_SYNC(0) | I2S_TCR2_BCP | I2S_TCR2_MSEL(1) | I2S_TCR2_BCD | I2S_TCR2_DIV(0);
+	I2S0_TCR2 = I2S_TCR2_SYNC(0) | I2S_TCR2_BCP | I2S_TCR2_MSEL(1) | I2S_TCR2_BCD | I2S_TCR2_DIV(1);
 	I2S0_TCR3 = I2S_TCR3_TCE;
 
-	//8 "Words" per Frame 16 Bit "Word" Length, MSB First:
-	I2S0_TCR4 = I2S_TCR4_FRSZ(3) | I2S_TCR4_SYWD(1) | I2S_TCR4_MF | I2S_TCR4_FSP | I2S_TCR4_FSD;
-	I2S0_TCR5 = I2S_TCR5_WNW(15) | I2S_TCR5_W0W(15) | I2S_TCR5_FBT(15);
+	//2 "Words" per SubFrame 32 Bit "Word" Length, MSB First:
+	I2S0_TCR4 = I2S_TCR4_FRSZ(1) | I2S_TCR4_SYWD(0) | I2S_TCR4_MF | I2S_TCR4_FSP | I2S_TCR4_FSD;
+	I2S0_TCR5 = I2S_TCR5_WNW(31) | I2S_TCR5_W0W(31) | I2S_TCR5_FBT(31);
+	
+	I2S0_RCSR = 0;
+	
 
-#if 0	
-	// configure pin mux for 3 clock signals
+#if 0
+	// configure pin mux for 3 clock signals	
 	CORE_PIN23_CONFIG = PORT_PCR_MUX(6); // pin 23, PTC2, I2S0_TX_FS (LRCLK)
-	CORE_PIN9_CONFIG  = PORT_PCR_MUX(6); // pin  9, PTC3, I2S0_TX_BCLK
+	CORE_PIN9_CONFIG  = PORT_PCR_MUX(6); // pin  9, PTC3, I2S0_TX_BCLK	
 	CORE_PIN11_CONFIG = PORT_PCR_MUX(6); // pin 11, PTC6, I2S0_MCLK
 #endif	
 }

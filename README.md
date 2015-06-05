@@ -3,6 +3,9 @@ SPDIF-Output for Teensy3.x Audio-Library
 
 This is BETA - testing only!
 
+- ISSUE: HALF SPEED(?!) Double clock does not work.
+
+
 - There may be some bugs.
 - Needs optimizing.
 
