@@ -91,7 +91,7 @@ void AudioOutputSPDIF::begin(void)
 	dma.TCD->SADDR = SPDIF_tx_buffer;
 	dma.TCD->SOFF = 4;
 	dma.TCD->ATTR = DMA_TCD_ATTR_SSIZE(2) | DMA_TCD_ATTR_DSIZE(2);
-	dma.TCD->NBYTES_MLNO = 4*4;
+	dma.TCD->NBYTES_MLNO = 2*4;
 	dma.TCD->SLAST = -sizeof(SPDIF_tx_buffer);
 	dma.TCD->DADDR = &I2S0_TDR0;
 	dma.TCD->DOFF = 0;
@@ -282,7 +282,6 @@ void AudioOutputSPDIF::update(void)
 }
 
 
-// We need 441117.647 * 64 (*2?) Hz
 #if F_CPU == 96000000 || F_CPU == 48000000 || F_CPU == 24000000
   // PLL is at 96 MHz in these modes
   #define MCLK_MULT 2
@@ -326,21 +325,19 @@ void AudioOutputSPDIF::config_SPDIF(void)
 	// configure transmitter
 	I2S0_TMR = 0;
 	I2S0_TCR1 = I2S_TCR1_TFW(1);  // watermark 
-	//I2S0_TCR2 = I2S_TCR2_SYNC(0) | I2S_TCR2_BCP | I2S_TCR2_MSEL(1) | I2S_TCR2_BCD | I2S_TCR2_DIV(3); //orig i2s
-	I2S0_TCR2 = I2S_TCR2_SYNC(0) | I2S_TCR2_BCP | I2S_TCR2_MSEL(1) | I2S_TCR2_BCD | I2S_TCR2_DIV(1);
+	I2S0_TCR2 = I2S_TCR2_SYNC(0) | I2S_TCR2_MSEL(1) | I2S_TCR2_BCD | I2S_TCR2_DIV(1);//I2S_TCR2_DIV(1)= 22khz, I2S_TCR2_DIV(0)= 44khz
 	I2S0_TCR3 = I2S_TCR3_TCE;
 
-	//2 "Words" per SubFrame 32 Bit "Word" Length, MSB First:
-	I2S0_TCR4 = I2S_TCR4_FRSZ(1) | I2S_TCR4_SYWD(0) | I2S_TCR4_MF | I2S_TCR4_FSP | I2S_TCR4_FSD;
+	//4 Words per Frame 32 Bit Word-Length -> 128 Bit Frame-Length, MSB First:
+	I2S0_TCR4 = I2S_TCR4_FRSZ(3) | I2S_TCR4_SYWD(0) | I2S_TCR4_MF | I2S_TCR4_FSP | I2S_TCR4_FSD;
 	I2S0_TCR5 = I2S_TCR5_WNW(31) | I2S_TCR5_W0W(31) | I2S_TCR5_FBT(31);
 	
 	I2S0_RCSR = 0;
 	
-
-#if 0
+#if 1
 	// configure pin mux for 3 clock signals	
 	CORE_PIN23_CONFIG = PORT_PCR_MUX(6); // pin 23, PTC2, I2S0_TX_FS (LRCLK)
 	CORE_PIN9_CONFIG  = PORT_PCR_MUX(6); // pin  9, PTC3, I2S0_TX_BCLK	
-	CORE_PIN11_CONFIG = PORT_PCR_MUX(6); // pin 11, PTC6, I2S0_MCLK
+//	CORE_PIN11_CONFIG = PORT_PCR_MUX(6); // pin 11, PTC6, I2S0_MCLK
 #endif	
 }
