@@ -21,8 +21,8 @@
  * THE SOFTWARE.
  */
 
-#include "output_SPDIF.h"
-#include <arm_math.h>
+#include "output_spdif.h"
+
 audio_block_t * AudioOutputSPDIF::block_left_1st = NULL;
 audio_block_t * AudioOutputSPDIF::block_right_1st = NULL;
 audio_block_t * AudioOutputSPDIF::block_left_2nd = NULL;
@@ -36,7 +36,7 @@ DMAMEM static uint32_t SPDIF_tx_buffer[AUDIO_BLOCK_SAMPLES * 4]; //2 KB
 DMAChannel AudioOutputSPDIF::dma(false);
 
 static const
-uint16_t bmclookup[256] = { //biphase mark encoded values (backwards) for 0x00..0xff
+uint16_t bmclookup[256] = { //biphase mark encoded values (least significant bit first)
 	0xcccc, 0x4ccc, 0x2ccc, 0xaccc, 0x34cc, 0xb4cc, 0xd4cc, 0x54cc,
 	0x32cc, 0xb2cc, 0xd2cc, 0x52cc, 0xcacc, 0x4acc, 0x2acc, 0xaacc,
 	0x334c, 0xb34c, 0xd34c, 0x534c, 0xcb4c, 0x4b4c, 0x2b4c, 0xab4c,
@@ -87,16 +87,18 @@ void AudioOutputSPDIF::begin(void)
 	config_SPDIF();
 	CORE_PIN22_CONFIG = PORT_PCR_MUX(6); // pin 22, PTC1, I2S0_TXD0
 
+	const int nbytes_mlno = 2 * 4; // 8 Bytes per minor loop
+
 	dma.TCD->SADDR = SPDIF_tx_buffer;
 	dma.TCD->SOFF = 4;
 	dma.TCD->ATTR = DMA_TCD_ATTR_SSIZE(2) | DMA_TCD_ATTR_DSIZE(2);
-	dma.TCD->NBYTES_MLNO = 2*4;
+	dma.TCD->NBYTES_MLNO = nbytes_mlno;
 	dma.TCD->SLAST = -sizeof(SPDIF_tx_buffer);
 	dma.TCD->DADDR = &I2S0_TDR0;
 	dma.TCD->DOFF = 0;
-	dma.TCD->CITER_ELINKNO = sizeof(SPDIF_tx_buffer) / dma.TCD->NBYTES_MLNO;
+	dma.TCD->CITER_ELINKNO = sizeof(SPDIF_tx_buffer) / nbytes_mlno;
 	dma.TCD->DLASTSGA = 0;
-	dma.TCD->BITER_ELINKNO = sizeof(SPDIF_tx_buffer) / dma.TCD->NBYTES_MLNO;
+	dma.TCD->BITER_ELINKNO = sizeof(SPDIF_tx_buffer) / nbytes_mlno;
 	dma.TCD->CSR = DMA_TCD_CSR_INTHALF | DMA_TCD_CSR_INTMAJOR;
 	dma.triggerAtHardwareEvent(DMAMUX_SOURCE_I2S0_TX);
 	update_responsibility = update_setup();
@@ -107,60 +109,26 @@ void AudioOutputSPDIF::begin(void)
 
 }
 
-//encodeL/encodeR:
-//1. to make it easier and a bit faster, the parity-bit is always the same.
-// - with a alternating parity we had to adjust the next subframe
-// instead, use a bit from the aux-info as parity.
+/*
 
-//2. the buffer is filled with an offset of 1 byte, so the last parity (which is always 0 now (see 1.) ) is written as first byte
-// -> a bit easier and faster to construct the subframes
+ http://www.hardwarebook.info/S/PDIF
 
+ 1. To make it easier and a bit faster, the parity-bit is always the same.
+	- With a alternating parity we had to adjust the next subframe. Instead, use a bit from the aux-info as parity.
 
-void AudioOutputSPDIF::encodeL(int32_t *dest, uint16_t lc)
-{
-static uint16_t frame = 0;
-	uint16_t lo, hi, aux;
+ 2. The buffer is filled with an offset of 1 byte, so the last parity (which is always 0 now (see 1.) ) is written as first byte.
+	-> A bit easier and faster to construct both subframes.
 
-	//Left Channel Subframe:
-	//lc = 0;
-	hi  = bmclookup[(uint8_t)(lc >> 8)];
-	lo  = bmclookup[(uint8_t) lc];
-	lo ^= (~((int16_t)hi) >> 16);
-	
-	*(dest+1) = ((uint32_t)lo << 16) | hi;
-	
-	aux = (0xB333 ^ (((uint32_t)((int16_t)lo)) >> 17));
-	if ( frame == 0 ) {
-		*(dest+0) = 0xcc000000 | (PREAMBLE_B << 16 ) | aux;
-	} else {
-		*(dest+0) = 0xcc000000 | (PREAMBLE_M << 16 ) | aux;
-	}
-	
-	frame++;
-	if (frame > 191) frame = 0;	
-}
-
-inline
-void AudioOutputSPDIF::encodeR(int32_t *dest, uint16_t rc)
-{
-	uint16_t lo, hi, aux;
-	hi  = bmclookup[(uint8_t)(rc >> 8)];
-	lo  = bmclookup[(uint8_t)rc];
-	lo ^= (~((int16_t)hi) >> 16);
-	*(dest+1) = ( ((uint32_t)lo << 16) | hi );
-	
-	aux = (0xB333 ^ (((uint32_t)((int16_t)lo)) >> 17));
-    *(dest+0)  =  0xcc000000 | (PREAMBLE_W << 16 ) | aux;		
-}
-
+*/
 
 void AudioOutputSPDIF::isr(void)
 {
-
+	static uint16_t frame = 0;
 	const int16_t *src;
-	int32_t *end, *dest;	
+	int32_t *end, *dest;
 	audio_block_t *block;
 	uint32_t saddr, offset;
+	uint16_t sample, lo, hi, aux;
 
 	saddr = (uint32_t)(dma.TCD->SADDR);
 	dma.clearInterrupt();
@@ -176,15 +144,34 @@ void AudioOutputSPDIF::isr(void)
 		dest = (int32_t *)SPDIF_tx_buffer;
 		end = (int32_t *)&SPDIF_tx_buffer[AUDIO_BLOCK_SAMPLES * 4/2];
 	}
-	
+
 
 	block = AudioOutputSPDIF::block_left_1st;
 	if (block) {
 		offset = AudioOutputSPDIF::block_left_offset;
 		src = &block->data[offset];
 		do {
-			encodeL(dest, *src++);
+
+			sample = *src++;
+
+			//Subframe Channel 1
+			hi  = bmclookup[(uint8_t)(sample >> 8)];
+			lo  = bmclookup[(uint8_t) sample];
+			lo ^= (~((int16_t)hi) >> 16);
+			// 16 Bit sample:
+			*(dest+1) = ((uint32_t)lo << 16) | hi;
+			// 4 Bit Auxillary-audio-databits, the first used as parity
+			aux = (0xB333 ^ (((uint32_t)((int16_t)lo)) >> 17));
+
+			if (++frame > 191) {
+				// VUCP-Bits ("Valid, Subcode, Channelstatus, Parity) = 0 (0xcc) | Preamble (depends on Framno.) | Auxillary
+				*(dest+0) = 0xcc000000 | (PREAMBLE_B << 16 ) | aux; //special preamble for one of 192 frames
+				frame = 0;
+			} else {
+				*(dest+0) = 0xcc000000 | (PREAMBLE_M << 16 ) | aux;
+			}
 			dest += 4;
+
 		} while (dest < end);
 		offset += AUDIO_BLOCK_SAMPLES/2;
 		if (offset < AUDIO_BLOCK_SAMPLES) {
@@ -195,9 +182,16 @@ void AudioOutputSPDIF::isr(void)
 			AudioOutputSPDIF::block_left_1st = AudioOutputSPDIF::block_left_2nd;
 			AudioOutputSPDIF::block_left_2nd = NULL;
 		}
-	} else {		
+	} else {
 		do {
-			encodeL(dest, 0);
+			if ( ++frame > 191 ) {
+				*(dest+0) = 0xcce8cccc;
+				frame = 0;
+			} else {
+				*(dest+0) = 0xcce2cccc;
+			}
+			*(dest+1) = 0xccccccccUL;
+
 			dest +=4;
 		} while (dest < end);
 	}
@@ -208,12 +202,23 @@ void AudioOutputSPDIF::isr(void)
 	if (block) {
 		offset = AudioOutputSPDIF::block_right_offset;
 		src = &block->data[offset];
-		
+
 		do {
-			encodeR(dest, *src++);
+			sample = *src++;
+
+			//Subframe Channel 2
+			hi  = bmclookup[(uint8_t)(sample >> 8)];
+			lo  = bmclookup[(uint8_t)sample];
+			lo ^= (~((int16_t)hi) >> 16);
+
+			*(dest+1) = ( ((uint32_t)lo << 16) | hi );
+
+			aux = (0xB333 ^ (((uint32_t)((int16_t)lo)) >> 17));
+			*(dest+0)  =  0xcc000000 | (PREAMBLE_W << 16 ) | aux;
+
 			dest += 4;
 		} while (dest < end);
-		
+
 		offset += AUDIO_BLOCK_SAMPLES/2;
 		if (offset < AUDIO_BLOCK_SAMPLES) {
 			AudioOutputSPDIF::block_right_offset = offset;
@@ -225,9 +230,8 @@ void AudioOutputSPDIF::isr(void)
 		}
 	} else {
 		do {
-			encodeR(dest, 0);
-			//*dest 	= 0xcce4ccccUL;
-			//*(dest+1) = 0xccccccccUL;				
+			*dest 	= 0xcce4ccccUL;
+			*(dest+1) = 0xccccccccUL;
 			dest += 4 ;
 		} while (dest < end);
 	}
@@ -316,27 +320,27 @@ void AudioOutputSPDIF::config_SPDIF(void)
 	SIM_SCGC6 |= SIM_SCGC6_I2S;
 	SIM_SCGC7 |= SIM_SCGC7_DMA;
 	SIM_SCGC6 |= SIM_SCGC6_DMAMUX;
-	
+
 	// enable MCLK output
 	I2S0_MCR = I2S_MCR_MICS(MCLK_SRC) | I2S_MCR_MOE;
 	I2S0_MDR = I2S_MDR_FRACT((MCLK_MULT-1)) | I2S_MDR_DIVIDE((MCLK_DIV-1));
 
 	// configure transmitter
 	I2S0_TMR = 0;
-	I2S0_TCR1 = I2S_TCR1_TFW(1);  // watermark 
-	I2S0_TCR2 = I2S_TCR2_SYNC(0) | I2S_TCR2_MSEL(1) | I2S_TCR2_BCD | I2S_TCR2_DIV(0);//I2S_TCR2_DIV(1)= 22khz, I2S_TCR2_DIV(0)= 44khz
+	I2S0_TCR1 = I2S_TCR1_TFW(1);  // watermark
+	I2S0_TCR2 = I2S_TCR2_SYNC(0) | I2S_TCR2_MSEL(1) | I2S_TCR2_BCD | I2S_TCR2_DIV(0);
 	I2S0_TCR3 = I2S_TCR3_TCE;
 
 	//4 Words per Frame 32 Bit Word-Length -> 128 Bit Frame-Length, MSB First:
 	I2S0_TCR4 = I2S_TCR4_FRSZ(3) | I2S_TCR4_SYWD(0) | I2S_TCR4_MF | I2S_TCR4_FSP | I2S_TCR4_FSD;
 	I2S0_TCR5 = I2S_TCR5_WNW(31) | I2S_TCR5_W0W(31) | I2S_TCR5_FBT(31);
-	
+
 	I2S0_RCSR = 0;
-	
-#if 1
-	// configure pin mux for 3 clock signals	
+
+#if 0
+	// configure pin mux for 3 clock signals (debug only)
 	CORE_PIN23_CONFIG = PORT_PCR_MUX(6); // pin 23, PTC2, I2S0_TX_FS (LRCLK)
-	CORE_PIN9_CONFIG  = PORT_PCR_MUX(6); // pin  9, PTC3, I2S0_TX_BCLK	
+	CORE_PIN9_CONFIG  = PORT_PCR_MUX(6); // pin  9, PTC3, I2S0_TX_BCLK
 //	CORE_PIN11_CONFIG = PORT_PCR_MUX(6); // pin 11, PTC6, I2S0_MCLK
-#endif	
+#endif
 }

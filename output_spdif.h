@@ -35,7 +35,7 @@ public:
 	void begin(void);
 	friend class AudioInputSPDIF;
 protected:
-	AudioOutputSPDIF(int dummy): AudioStream(2, inputQueueArray) {} // to be used only inside AudioOutputSPDIFslave !!
+	AudioOutputSPDIF(int dummy): AudioStream(2, inputQueueArray) {}
 	static void config_SPDIF(void);
 	static audio_block_t *block_left_1st;
 	static audio_block_t *block_right_1st;
@@ -43,8 +43,6 @@ protected:
 	static DMAChannel dma;
 	static void isr(void);
 private:
-	static void encodeL(int32_t *dest, uint16_t lc);
-	static void encodeR(int32_t *dest, uint16_t rc);
 	static audio_block_t *block_left_2nd;
 	static audio_block_t *block_right_2nd;
 	static uint16_t block_left_offset;
