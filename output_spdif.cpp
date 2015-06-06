@@ -36,9 +36,9 @@ DMAMEM static uint32_t SPDIF_tx_buffer[AUDIO_BLOCK_SAMPLES * 4]; //2 KB
 DMAChannel AudioOutputSPDIF::dma(false);
 
 static const
-uint16_t bmclookup[256] = { //biphase mark encoded values for 0x00..0xff
+uint16_t bmclookup[256] = { //biphase mark encoded values (backwards) for 0x00..0xff
 	0xcccc, 0x4ccc, 0x2ccc, 0xaccc, 0x34cc, 0xb4cc, 0xd4cc, 0x54cc,
-    0x32cc, 0xb2cc, 0xd2cc, 0x52cc, 0xcacc, 0x4acc, 0x2acc, 0xaacc,
+	0x32cc, 0xb2cc, 0xd2cc, 0x52cc, 0xcacc, 0x4acc, 0x2acc, 0xaacc,
 	0x334c, 0xb34c, 0xd34c, 0x534c, 0xcb4c, 0x4b4c, 0x2b4c, 0xab4c,
 	0xcd4c, 0x4d4c, 0x2d4c, 0xad4c, 0x354c, 0xb54c, 0xd54c, 0x554c,
 	0x332c, 0xb32c, 0xd32c, 0x532c, 0xcb2c, 0x4b2c, 0x2b2c, 0xab2c,
@@ -77,8 +77,7 @@ uint16_t bmclookup[256] = { //biphase mark encoded values for 0x00..0xff
 
 void AudioOutputSPDIF::begin(void)
 {
-	//perhaps it is faster to use 32-bit output ? -> less dma transfers on the bus
-	
+
 	dma.begin(true); // Allocate the DMA channel first
 
 	block_left_1st = NULL;
@@ -325,7 +324,7 @@ void AudioOutputSPDIF::config_SPDIF(void)
 	// configure transmitter
 	I2S0_TMR = 0;
 	I2S0_TCR1 = I2S_TCR1_TFW(1);  // watermark 
-	I2S0_TCR2 = I2S_TCR2_SYNC(0) | I2S_TCR2_MSEL(1) | I2S_TCR2_BCD | I2S_TCR2_DIV(1);//I2S_TCR2_DIV(1)= 22khz, I2S_TCR2_DIV(0)= 44khz
+	I2S0_TCR2 = I2S_TCR2_SYNC(0) | I2S_TCR2_MSEL(1) | I2S_TCR2_BCD | I2S_TCR2_DIV(0);//I2S_TCR2_DIV(1)= 22khz, I2S_TCR2_DIV(0)= 44khz
 	I2S0_TCR3 = I2S_TCR3_TCE;
 
 	//4 Words per Frame 32 Bit Word-Length -> 128 Bit Frame-Length, MSB First:
